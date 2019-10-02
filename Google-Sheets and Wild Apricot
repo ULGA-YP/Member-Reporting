@@ -1,0 +1,209 @@
+function onOpen() {
+  
+  SpreadsheetApp.getUi()
+      .createMenu('Wild Apricot')
+      .addItem('Get account details', 'getAccountDetails')
+      .addItem('Update Member Information', 'memberdetails')
+      .addToUi();
+};
+
+//  There are 2 places where you will need to input your information.  The first is below.  Look for the word "Batman" and replace it with your Wild Apricot Account Number, which should be a FIVE digit number.  (This is found in the admin page, under Account.  Also, you can find it by doing a simply API call and returning just that for my tech folks.  
+
+// The second spot that you will need to make a change is where we input our API key.  This part of the script actually gets the token needed to pull data from the Wild Apricot system, so it is pretty important.  You can get this information via the Admin panel for Wild Apricot, and look for "Integrations".  Look for "JOKER" below and replace it with the token you get from the "Integrations" panel.
+
+function urlBuilder()
+{
+  var apiUrl = 'https://api.wildapricot.org';
+  return {
+    getAuthServiceUrl: function()
+    {
+      return 'https://oauth.wildapricot.org/auth/token';
+    },
+    getAccountsListUrl: function()
+    {
+      return apiUrl+'/v2/accounts';
+    },
+    getContactFieldsUrl: function(accountId)
+    {
+      return apiUrl+'/v2/accounts/' + accountId + '/contactfields';
+    },
+    getContactsListUrl: function()
+    {
+      return apiUrl+'/v2/accounts/BATMAN/Contacts?$async=false&$filter=Member eq true';
+      
+      //  return apiUrl+'/v2/accounts/BATMAN/Contacts?$async=false&$filter=Member eq true&$top=20'; -- Use this line instead of the other one, in case you need to debug anything, since it limits the payload to only 20 records.
+    }
+  };
+}
+
+// Gets the API token information.  The commented out portion is for cases where end users will be able self-serve in a way by having users input the key information into Google Sheets.  More of an FYI, but all you need to do is replace Joker with the incoherent API key, and you are DONE!
+
+function getTokenByApiKey(ui, authServiceUrl){
+//  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  
+//  userResponse = ui.prompt("Enter api key");
+//  if( userResponse.getSelectedButton() != ui.Button.OK ) return;
+//  var apiKey = userResponse.getResponseText();
+   
+//  The variable ("token") is a way to reduce complexity and protect people from having to constantly input the api key into the spreadsheet.  
+//  If you want to not do this, enable the above lines and replace the key with "apiKey".  Which is actually more secure.    
+  
+  var token = retrieveTokenByApiKey(authServiceUrl, 'Joker');
+  return token;
+}
+// This function captures the appropriate account details for you.  The biggest gain here, is your accountid, which will be used for all other API calls.
+
+function getAccountDetails(){  
+  Logger.clear();
+  
+  var ui = SpreadsheetApp.getUi();  
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Account Information');
+  var urls = urlBuilder();
+ 
+  var token = getToken(ui, urls.getAuthServiceUrl());
+  var account = getDataFromApi(urls.getAccountsListUrl(), token)[0];
+  
+  sheet.getRange('B4').setValue(account.Id);
+  sheet.getRange('B5').setValue(account.Name);
+  sheet.getRange('B6').setValue(account.PrimaryDomainName);
+  sheet.getRange('B7').setValue(account.ContactLimitInfo.CurrentContactsCount);
+  sheet.getRange('B8').setValue(account.ContactLimitInfo.BillingPlanContactsLimit);  
+}
+
+// Our use case was to capture our member details in preparation for some member reporting solutions.  This captures that information.  
+// Note:  Do not remove Logger.clear, since it makes sure you don't have duplicates from previous runs.
+
+function memberdetails()
+{
+  Logger.clear();
+  
+  var urls = urlBuilder();
+  
+// This ui variable isn't directly used.  Look at the getTokenbyAPIKey function.  I commented out most of that code and provide an explanation there.  Below is the original, but afterwards is the updated one.
+//  var ui = SpreadsheetApp.getUi(); 
+  var scrub = deleteRows();
+  var ui = "Test";
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Raw_Data');
+
+  var token = getToken(ui, urls.getAuthServiceUrl());
+  var accountId = getDataFromApi(urls.getAccountsListUrl(), token)[0].Id;
+  var contactFields = getDataFromApi(urls.getContactFieldsUrl(accountId), token);
+  
+  // Since we will run this periodically, let's be proactive and refresh all of our data each time.  This script below clears the entire sheet
+  
+  sheet.clearContents();
+  
+  // First, let's create an API call that gathers all of the relevant FieldNames, and populates the data accordingly.  
+  // Instead of hardcoding this, it makes more sense to do it this way, in case the source data is altered in anyway.  
+  
+  var contactLists = getDataFromApi(urls.getContactsListUrl(), token)["Contacts"];  //[0]["FieldValues"];             //[3].FieldName  -- This is for reference, for how it would look if I wanted a particular fieldname;
+  
+  // This loop identifies exactly how many records are present.  It will make it easier to do the larger loop later on. 
+  
+  for (var info in contactLists)
+  {
+    Logger.log(info);
+  }
+  
+  // This loop identifies exactly how many member records are present.  It will also ensure we have a more dynamic mechanism, instead of static.
+  
+  for (var total in contactLists[0]["FieldValues"])
+  {
+    Logger.log(total);
+  }
+  
+  //This script loops through all of the member contacts and puts the results on different rows.
+  
+  for (i=1; i<=total; i++) {
+    sheet.getRange(1,i).setValue(contactLists[0]["FieldValues"][i-1].FieldName);
+  } 
+
+  // This script gets all of the data that we need and it applies a certain amount of "Filtering" based on our unique chapter's criteria for an "Active" member.
+  
+  for (i=1; i<info; i++) {    // -- This first loop will go through all of the members available.  So for short, the letter "i" is for which member we are on.  
+    for (j=1; j<=total; j++) {// -- This second loop will go through all of the elements present in the data (These are the columns and the raw data).  This is letter "j".
+      if (contactLists[i-1]["FieldValues"][36]["Value"]["Value"] != "PendingNew" && contactLists[i-1]["FieldValues"][36]["Value"]["Value"] != "Lapsed" && contactLists[i-1]["FieldValues"][31]["Value"] != "345270"){
+        sheet.getRange(i+1,j).setValue(contactLists[i-1]["FieldValues"][j-1].Value)
+        }
+      }
+    }
+
+deleteRows();
+  
+  } 
+
+// This function will clean up our blank rows that are produced by the script above.  I didn't have the time to shore up the last piece in order to avoid this, but for now this works ideally.  
+
+function deleteRows() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Raw_Data');
+  var rows = sheet.getDataRange();
+  var numRows = rows.getNumRows();
+  var values = rows.getValues();
+
+  var rowsDeleted = 0;
+  for (var i = 0; i <= numRows - 1; i++) {
+    var row = values[i];
+    if (row[20] == '') { // This searches all cells in columns A (change to row[1] for columns B and so on) and deletes row if cell is empty or has value 'delete'.
+      sheet.deleteRow((parseInt(i)+1) - rowsDeleted);
+      rowsDeleted++;
+    }
+  }
+}
+
+function getToken(ui, authServiceUrl)
+{
+  // var token = getTokenByAdminCredentials(ui, authServiceUrl);
+  var token = getTokenByApiKey(ui, authServiceUrl);
+  return token;
+}
+  
+function getDataFromApi(url, token)
+{
+  return executeApiRequest(url, token, 'GET');
+}
+
+function executeApiRequest(url, token, method, data)
+{
+  if (typeof method === 'undefined') { method = 'GET'; }
+  
+   var requestParams = {
+    method:method,
+    headers: { Authorization:'Bearer ' + token },
+    accept:'application/json'
+  }
+   
+  if( data )
+  {
+    requestParams.payload = JSON.stringify(data);
+    requestParams.contentType = 'application/json';    
+  }
+   
+  var responseJson = UrlFetchApp.fetch(url, requestParams);
+  var result = JSON.parse(responseJson);
+  Logger.log(result);
+  return result;
+}
+
+function retrieveTokenByApiKey(authServiceUrl, apiKey)
+{
+  var scopeNames = "contacts finances events event_registrations account membership_levels";
+  
+  var authRequestParams = {
+    method:'POST',
+    headers:{
+      Authorization:'Basic ' + Utilities.base64Encode('APIKEY' + ':' + apiKey)
+    },
+    contentType: 'application/x-www-form-urlencoded',
+    payload: Utilities.formatString('grant_type=%s&scope=%s', 'client_credentials', scopeNames)
+  };
+
+  var tokenJson = UrlFetchApp.fetch(authServiceUrl, authRequestParams);
+  var tokenData = JSON.parse(tokenJson);
+  return tokenData.access_token;
+}
+
+function getSomeRandomString()
+{
+  var src = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum';
+  return src.substring(Math.floor(1+Math.random()*100), 20);
+}
